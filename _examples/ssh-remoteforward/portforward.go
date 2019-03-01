@@ -5,6 +5,7 @@ import (
 	"log"
 
 	"github.com/gliderlabs/ssh"
+	gossh "golang.org/x/crypto/ssh"
 )
 
 func main() {
@@ -17,7 +18,7 @@ func main() {
 			return true
 		}),
 		Addr: ":2222",
-		Handler: ssh.Handler(func(s ssh.Session) {
+		Handler: ssh.Handler(func(s ssh.Session, _ *gossh.Request) {
 			io.WriteString(s, "Remote forwarding available...\n")
 			select {}
 		}),

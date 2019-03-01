@@ -237,7 +237,7 @@ func (sess *session) handleRequests(reqs <-chan *gossh.Request) {
 			req.Reply(true, nil)
 
 			go func() {
-				sess.handler(sess)
+				sess.handler(sess, req)
 				sess.Exit(0)
 			}()
 		case "env":

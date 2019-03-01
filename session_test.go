@@ -73,7 +73,7 @@ func TestStdout(t *testing.T) {
 	t.Parallel()
 	testBytes := []byte("Hello world\n")
 	session, _, cleanup := newTestSession(t, &Server{
-		Handler: func(s Session) {
+		Handler: func(s Session, _ *gossh.Request) {
 			s.Write(testBytes)
 		},
 	}, nil)
@@ -92,7 +92,7 @@ func TestStderr(t *testing.T) {
 	t.Parallel()
 	testBytes := []byte("Hello world\n")
 	session, _, cleanup := newTestSession(t, &Server{
-		Handler: func(s Session) {
+		Handler: func(s Session, _ *gossh.Request) {
 			s.Stderr().Write(testBytes)
 		},
 	}, nil)
@@ -111,7 +111,7 @@ func TestStdin(t *testing.T) {
 	t.Parallel()
 	testBytes := []byte("Hello world\n")
 	session, _, cleanup := newTestSession(t, &Server{
-		Handler: func(s Session) {
+		Handler: func(s Session, _ *gossh.Request) {
 			io.Copy(s, s) // stdin back into stdout
 		},
 	}, nil)
@@ -131,7 +131,7 @@ func TestUser(t *testing.T) {
 	t.Parallel()
 	testUser := []byte("progrium")
 	session, _, cleanup := newTestSession(t, &Server{
-		Handler: func(s Session) {
+		Handler: func(s Session, _ *gossh.Request) {
 			io.WriteString(s, s.User())
 		},
 	}, &gossh.ClientConfig{
@@ -151,7 +151,7 @@ func TestUser(t *testing.T) {
 func TestDefaultExitStatusZero(t *testing.T) {
 	t.Parallel()
 	session, _, cleanup := newTestSession(t, &Server{
-		Handler: func(s Session) {
+		Handler: func(s Session, _ *gossh.Request) {
 			// noop
 		},
 	}, nil)
@@ -165,7 +165,7 @@ func TestDefaultExitStatusZero(t *testing.T) {
 func TestExplicitExitStatusZero(t *testing.T) {
 	t.Parallel()
 	session, _, cleanup := newTestSession(t, &Server{
-		Handler: func(s Session) {
+		Handler: func(s Session, _ *gossh.Request) {
 			s.Exit(0)
 		},
 	}, nil)
@@ -179,7 +179,7 @@ func TestExplicitExitStatusZero(t *testing.T) {
 func TestExitStatusNonZero(t *testing.T) {
 	t.Parallel()
 	session, _, cleanup := newTestSession(t, &Server{
-		Handler: func(s Session) {
+		Handler: func(s Session, _ *gossh.Request) {
 			s.Exit(1)
 		},
 	}, nil)
@@ -201,7 +201,7 @@ func TestPty(t *testing.T) {
 	winHeight := 80
 	done := make(chan bool)
 	session, _, cleanup := newTestSession(t, &Server{
-		Handler: func(s Session) {
+		Handler: func(s Session, _ *gossh.Request) {
 			ptyReq, _, isPty := s.Pty()
 			if !isPty {
 				t.Fatalf("expected pty but none requested")
@@ -236,7 +236,7 @@ func TestPtyResize(t *testing.T) {
 	winches := make(chan Window)
 	done := make(chan bool)
 	session, _, cleanup := newTestSession(t, &Server{
-		Handler: func(s Session) {
+		Handler: func(s Session, _ *gossh.Request) {
 			ptyReq, winCh, isPty := s.Pty()
 			if !isPty {
 				t.Fatalf("expected pty but none requested")
@@ -290,7 +290,7 @@ func TestSignals(t *testing.T) {
 	t.Parallel()
 
 	session, _, cleanup := newTestSession(t, &Server{
-		Handler: func(s Session) {
+		Handler: func(s Session, _ *gossh.Request) {
 			signals := make(chan Signal)
 			s.Signals(signals)
 			if sig := <-signals; sig != SIGINT {
