@@ -33,7 +33,7 @@ var DefaultHandler Handler
 type Option func(*Server) error
 
 // Handler is a callback for handling established SSH sessions.
-type Handler func(Session)
+type Handler func(Session, *gossh.Request)
 
 // PublicKeyHandler is a callback for performing public key authentication.
 type PublicKeyHandler func(ctx Context, key PublicKey) bool
