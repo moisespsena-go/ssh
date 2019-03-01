@@ -19,12 +19,13 @@ building SSH servers. The goal of the API was to make it as simple as using
 
  import (
      "github.com/gliderlabs/ssh"
+     gossh "golang.org/x/crypto/ssh"
      "io"
      "log"
  )
 
  func main() {
-     ssh.Handle(func(s ssh.Session) {
+     ssh.Handle(func(s ssh.Session, req *gossh.Request) {
          io.WriteString(s, "Hello world\n")
      })  
 
