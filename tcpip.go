@@ -5,7 +5,6 @@ import (
 	"log"
 	"net"
 	"strconv"
-	"sync"
 
 	gossh "golang.org/x/crypto/ssh"
 )
@@ -35,7 +34,17 @@ func directTcpipHandler(srv *Server, conn *gossh.ServerConn, newChan gossh.NewCh
 		return
 	}
 
-	dest := net.JoinHostPort(d.DestAddr, strconv.FormatInt(int64(d.DestPort), 10))
+	var dest string
+
+	if srv.LocalPortForwardingResolverCallback != nil {
+		var err error
+		if dest, err = srv.LocalPortForwardingResolverCallback(ctx, d.DestAddr, d.DestPort); err != nil {
+			newChan.Reject(gossh.ConnectionFailed, "Local forward port resolver failed: "+err.Error())
+			return
+		}
+	} else {
+		dest = net.JoinHostPort(d.DestAddr, strconv.FormatInt(int64(d.DestPort), 10))
+	}
 
 	var dialer net.Dialer
 	dconn, err := dialer.DialContext(ctx, "tcp", dest)
@@ -85,43 +94,47 @@ type remoteForwardChannelData struct {
 }
 
 type forwardedTCPHandler struct {
-	forwards map[string]net.Listener
-	sync.Mutex
 }
 
 func (h forwardedTCPHandler) HandleRequest(ctx Context, srv *Server, req *gossh.Request) (bool, []byte) {
-	h.Lock()
-	if h.forwards == nil {
-		h.forwards = make(map[string]net.Listener)
-	}
-	h.Unlock()
 	conn := ctx.Value(ContextKeyConn).(*gossh.ServerConn)
+	register := srv.ReversePortForwardingRegister
 	switch req.Type {
 	case "tcpip-forward":
-		var reqPayload remoteForwardRequest
-		if err := gossh.Unmarshal(req.Payload, &reqPayload); err != nil {
+		var (
+			reqPayload remoteForwardRequest
+			err        error
+		)
+		if err = gossh.Unmarshal(req.Payload, &reqPayload); err != nil {
 			// TODO: log parse failure
 			return false, []byte{}
 		}
 		if srv.ReversePortForwardingCallback == nil || !srv.ReversePortForwardingCallback(ctx, reqPayload.BindAddr, reqPayload.BindPort) {
 			return false, []byte("port forwarding is disabled")
 		}
-		addr := net.JoinHostPort(reqPayload.BindAddr, strconv.Itoa(int(reqPayload.BindPort)))
-		ln, err := net.Listen("tcp", addr)
+		var (
+			reqAddr = net.JoinHostPort(reqPayload.BindAddr, strconv.Itoa(int(reqPayload.BindPort)))
+			ln      net.Listener
+		)
+		if srv.ReversePortForwardingListenerCallback != nil {
+			ln, err = srv.ReversePortForwardingListenerCallback(ctx, reqPayload.BindAddr, reqPayload.BindPort)
+		} else {
+			ln, err = net.Listen("tcp", reqAddr)
+		}
+
 		if err != nil {
 			// TODO: log listen failure
 			return false, []byte{}
 		}
-		_, destPortStr, _ := net.SplitHostPort(ln.Addr().String())
+
+		addr := ln.Addr().String()
+
+		_, destPortStr, _ := net.SplitHostPort(addr)
 		destPort, _ := strconv.Atoi(destPortStr)
-		h.Lock()
-		h.forwards[addr] = ln
-		h.Unlock()
+		register.Register(ctx, reqAddr, ln)
 		go func() {
 			<-ctx.Done()
-			h.Lock()
-			ln, ok := h.forwards[addr]
-			h.Unlock()
+			ln, ok := register.Get(ctx, reqAddr)
 			if ok {
 				ln.Close()
 			}
@@ -162,9 +175,7 @@ func (h forwardedTCPHandler) HandleRequest(ctx Context, srv *Server, req *gossh.
 					}()
 				}()
 			}
-			h.Lock()
-			delete(h.forwards, addr)
-			h.Unlock()
+			register.UnRegister(ctx, reqAddr)
 		}()
 		return true, gossh.Marshal(&remoteForwardSuccess{uint32(destPort)})
 
@@ -175,10 +186,7 @@ func (h forwardedTCPHandler) HandleRequest(ctx Context, srv *Server, req *gossh.
 			return false, []byte{}
 		}
 		addr := net.JoinHostPort(reqPayload.BindAddr, strconv.Itoa(int(reqPayload.BindPort)))
-		h.Lock()
-		ln, ok := h.forwards[addr]
-		h.Unlock()
-		if ok {
+		if ln, ok := srv.ReversePortForwardingRegister.Get(ctx, addr); ok {
 			ln.Close()
 		}
 		return true, nil

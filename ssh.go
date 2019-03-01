@@ -3,6 +3,7 @@ package ssh
 import (
 	"crypto/subtle"
 	"net"
+	"sync"
 
 	gossh "golang.org/x/crypto/ssh"
 )
@@ -58,11 +59,74 @@ type ConnCallback func(conn net.Conn) net.Conn
 // LocalPortForwardingCallback is a hook for allowing port forwarding
 type LocalPortForwardingCallback func(ctx Context, destinationHost string, destinationPort uint32) bool
 
+// LocalPortForwardingCallback is a hook for allowing port forwarding
+type LocalPortForwardingResolverCallback func(ctx Context, destinationHost string, destinationPort uint32) (addr string, err error)
+
 // ReversePortForwardingCallback is a hook for allowing reverse port forwarding
 type ReversePortForwardingCallback func(ctx Context, bindHost string, bindPort uint32) bool
 
+// ReversePortForwardingListenerCallback is a hook for create port forwarding listener
+type ReversePortForwardingListenerCallback func(ctx Context, bindHost string, bindPort uint32) (net.Listener, error)
+
 // DefaultServerConfigCallback is a hook for creating custom default server configs
 type DefaultServerConfigCallback func(ctx Context) *gossh.ServerConfig
+
+// ReversePortForwardingRegister is a port forwarding register
+type ReversePortForwardingRegister interface {
+	Register(ctx Context, addr string, ln net.Listener)             // Register registry port forwarding listener
+	UnRegister(ctx Context, addr string) (ln net.Listener, ok bool) // UnRegister unregister port forwarding listener
+	Get(ctx Context, key string) (ln net.Listener, ok bool)         // Get return port forwarding listener
+}
+
+type DefaultReversePortForwardingRegister struct {
+	forwards map[string]map[string]net.Listener
+	mu       sync.Mutex
+}
+
+func (r *DefaultReversePortForwardingRegister) Register(ctx Context, addr string, ln net.Listener) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.forwards == nil {
+		r.forwards = map[string]map[string]net.Listener{}
+	}
+	clientKey := ctx.RemoteAddr().String()
+	_, ok := r.forwards[clientKey]
+	if !ok {
+		r.forwards[clientKey] = map[string]net.Listener{}
+	}
+	r.forwards[clientKey][addr] = ln
+}
+
+func (r *DefaultReversePortForwardingRegister) UnRegister(ctx Context, addr string) (ln net.Listener, ok bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	clientKey := ctx.RemoteAddr().String()
+	_, ok2 := r.forwards[clientKey]
+	if !ok2 {
+		return
+	}
+	if ln, ok = r.forwards[clientKey][addr]; ok {
+		delete(r.forwards[clientKey], addr)
+	}
+	if len(r.forwards[clientKey]) == 0 {
+		delete(r.forwards, clientKey)
+	}
+	return
+}
+
+func (r *DefaultReversePortForwardingRegister) Get(ctx Context, addr string) (ln net.Listener, ok bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	clientKey := ctx.RemoteAddr().String()
+	_, ok2 := r.forwards[clientKey]
+	if !ok2 {
+		return
+	}
+	ln, ok = r.forwards[clientKey][addr]
+	return
+}
 
 // Window represents the size of a PTY window.
 type Window struct {
@@ -121,3 +185,7 @@ func KeysEqual(ak, bk PublicKey) bool {
 	b := bk.Marshal()
 	return (len(a) == len(b) && subtle.ConstantTimeCompare(a, b) == 1)
 }
+
+type Proxy func(ctx Context, conn *gossh.ServerConn, chans <-chan gossh.NewChannel, reqs <-chan *gossh.Request)
+
+type ProxyCallback func(ctx Context, conn *gossh.ServerConn) (proxy Proxy, ok bool)

@@ -8,7 +8,6 @@ import (
 	"net"
 	"sync"
 
-	"github.com/anmitsu/go-shlex"
 	gossh "golang.org/x/crypto/ssh"
 )
 
@@ -84,12 +83,13 @@ func sessionHandler(srv *Server, conn *gossh.ServerConn, newChan gossh.NewChanne
 		return
 	}
 	sess := &session{
-		Channel:   ch,
-		conn:      conn,
-		handler:   srv.Handler,
-		ptyCb:     srv.PtyCallback,
-		sessReqCb: srv.SessionRequestCallback,
-		ctx:       ctx,
+		Channel:         ch,
+		conn:            conn,
+		handler:         srv.Handler,
+		ptyCb:           srv.PtyCallback,
+		sessReqCb:       srv.SessionRequestCallback,
+		ctx:             ctx,
+		reqTypeHandlers: srv.SessionRequestTypeHandlers,
 	}
 	sess.handleRequests(reqs)
 }
@@ -97,19 +97,20 @@ func sessionHandler(srv *Server, conn *gossh.ServerConn, newChan gossh.NewChanne
 type session struct {
 	sync.Mutex
 	gossh.Channel
-	conn      *gossh.ServerConn
-	handler   Handler
-	handled   bool
-	exited    bool
-	pty       *Pty
-	winch     chan Window
-	env       []string
-	ptyCb     PtyCallback
-	sessReqCb SessionRequestCallback
-	cmd       []string
-	ctx       Context
-	sigCh     chan<- Signal
-	sigBuf    []Signal
+	conn            *gossh.ServerConn
+	handler         Handler
+	handled         bool
+	exited          bool
+	pty             *Pty
+	winch           chan Window
+	env             []string
+	ptyCb           PtyCallback
+	sessReqCb       SessionRequestCallback
+	cmd             []string
+	ctx             Context
+	sigCh           chan<- Signal
+	sigBuf          []Signal
+	reqTypeHandlers map[string]func(s Session, req *gossh.Request)
 }
 
 func (sess *session) Write(p []byte) (n int, err error) {
@@ -205,6 +206,13 @@ func (sess *session) Signals(c chan<- Signal) {
 
 func (sess *session) handleRequests(reqs <-chan *gossh.Request) {
 	for req := range reqs {
+		if sess.reqTypeHandlers != nil {
+			if h, ok := sess.reqTypeHandlers[req.Type]; ok {
+				h(sess, req)
+				continue
+			}
+		}
+
 		switch req.Type {
 		case "shell", "exec":
 			if sess.handled {
@@ -213,6 +221,7 @@ func (sess *session) handleRequests(reqs <-chan *gossh.Request) {
 			}
 
 			var payload = struct{ Value string }{}
+
 			gossh.Unmarshal(req.Payload, &payload)
 			sess.cmd, _ = shlex.Split(payload.Value, true)
 
