@@ -6,6 +6,24 @@ import (
 	"time"
 )
 
+type CloseListener interface {
+	CloseCallback(f ...func())
+}
+
+type closeListener struct {
+	closeCallbacks []func()
+}
+
+func (c *closeListener) CloseCallback(f ...func()) {
+	c.closeCallbacks = append(c.closeCallbacks, f...)
+}
+
+func (c *closeListener) call() {
+	for _, c := range c.closeCallbacks {
+		c()
+	}
+}
+
 type serverConn struct {
 	net.Conn
 

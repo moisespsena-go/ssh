@@ -131,10 +131,10 @@ func (h forwardedTCPHandler) HandleRequest(ctx Context, srv *Server, req *gossh.
 
 		_, destPortStr, _ := net.SplitHostPort(addr)
 		destPort, _ := strconv.Atoi(destPortStr)
-		register.Register(ctx, reqAddr, ln)
+		register.Register(ctx, addr, ln)
 		go func() {
 			<-ctx.Done()
-			ln, ok := register.Get(ctx, reqAddr)
+			ln, ok := register.Get(ctx, addr)
 			if ok {
 				ln.Close()
 			}
@@ -175,7 +175,7 @@ func (h forwardedTCPHandler) HandleRequest(ctx Context, srv *Server, req *gossh.
 					}()
 				}()
 			}
-			register.UnRegister(ctx, reqAddr)
+			register.UnRegister(ctx, addr)
 		}()
 		return true, gossh.Marshal(&remoteForwardSuccess{uint32(destPort)})
 

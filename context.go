@@ -52,6 +52,10 @@ var (
 	// The associated value will be of type gossh.ServerConn.
 	ContextKeyConn = &contextKey{"ssh-conn"}
 
+	// ContextKeyCloseListener is a context key for use with Contexts in this package.
+	// The associated value will be of type CloseListener.
+	ContextKeyCloseListener = &contextKey{"close-listener"}
+
 	// ContextKeyPublicKey is a context key for use with Contexts in this package.
 	// The associated value will be of type PublicKey.
 	ContextKeyPublicKey = &contextKey{"public-key"}

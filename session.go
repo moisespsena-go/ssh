@@ -90,7 +90,7 @@ func sessionHandler(srv *Server, conn *gossh.ServerConn, newChan gossh.NewChanne
 		ptyCb:           srv.PtyCallback,
 		sessReqCb:       srv.SessionRequestCallback,
 		ctx:             ctx,
-		reqTypeHandlers: srv.SessionRequestTypeHandlers,
+		reqTypeHandlers: srv.SessionRequestHandlers,
 	}
 	sess.handleRequests(reqs)
 }

@@ -41,9 +41,9 @@ type Server struct {
 	IdleTimeout time.Duration // connection timeout when no activity, none if empty
 	MaxTimeout  time.Duration // absolute connection timeout, none if empty
 
-	channelHandlers            map[string]channelHandler
-	requestHandlers            map[string]RequestHandler
-	SessionRequestTypeHandlers map[string]func(s Session, req *gossh.Request)
+	channelHandlers        map[string]ChannelHandler
+	requestHandlers        map[string]RequestHandler
+	SessionRequestHandlers map[string]func(s Session, req *gossh.Request)
 
 	listenerWg sync.WaitGroup
 	mu         sync.Mutex
@@ -56,8 +56,20 @@ type RequestHandler interface {
 	HandleRequest(ctx Context, srv *Server, req *gossh.Request) (ok bool, payload []byte)
 }
 
+type requestHandlerFunc struct {
+	handler func(ctx Context, srv *Server, req *gossh.Request) (ok bool, payload []byte)
+}
+
+func (f requestHandlerFunc) HandleRequest(ctx Context, srv *Server, req *gossh.Request) (ok bool, payload []byte) {
+	return f.handler(ctx, srv, req)
+}
+
+func RequestHandlerFunc(handler func(ctx Context, srv *Server, req *gossh.Request) (ok bool, payload []byte)) RequestHandler {
+	return &requestHandlerFunc{handler}
+}
+
 // internal for now
-type channelHandler func(srv *Server, conn *gossh.ServerConn, newChan gossh.NewChannel, ctx Context)
+type ChannelHandler func(srv *Server, conn *gossh.ServerConn, newChan gossh.NewChannel, ctx Context)
 
 func (srv *Server) ensureHostSigner() error {
 	if len(srv.HostSigners) == 0 {
@@ -70,16 +82,61 @@ func (srv *Server) ensureHostSigner() error {
 	return nil
 }
 
+func (srv *Server) RequestHandler(reqType string, handler RequestHandler) {
+	srv.mu.Lock()
+	defer srv.mu.Unlock()
+	if srv.requestHandlers == nil {
+		srv.requestHandlers = map[string]RequestHandler{}
+	}
+	srv.requestHandlers[reqType] = handler
+}
+
+func (srv *Server) GetRequestHandler(reqType string) (handler RequestHandler, ok bool) {
+	srv.mu.Lock()
+	defer srv.mu.Unlock()
+	handler, ok = srv.requestHandlers[reqType]
+	return
+}
+
+func (srv *Server) ChannelHandler(chanType string, handler ChannelHandler) {
+	srv.mu.Lock()
+	defer srv.mu.Unlock()
+	if srv.channelHandlers == nil {
+		srv.channelHandlers = map[string]ChannelHandler{}
+	}
+	srv.channelHandlers[chanType] = handler
+}
+
+func (srv *Server) GetChannelHandler(chanType string) (handler ChannelHandler, ok bool) {
+	srv.mu.Lock()
+	defer srv.mu.Unlock()
+	handler, ok = srv.channelHandlers[chanType]
+	return
+}
+
 func (srv *Server) ensureHandlers() {
 	srv.mu.Lock()
 	defer srv.mu.Unlock()
-	srv.requestHandlers = map[string]RequestHandler{
-		"tcpip-forward":        forwardedTCPHandler{},
-		"cancel-tcpip-forward": forwardedTCPHandler{},
+	if srv.requestHandlers == nil {
+		srv.requestHandlers = map[string]RequestHandler{}
 	}
-	srv.channelHandlers = map[string]channelHandler{
-		"session":      sessionHandler,
-		"direct-tcpip": directTcpipHandler,
+	if _, ok := srv.requestHandlers["tcpip-forward"]; !ok {
+		srv.requestHandlers["tcpip-forward"] = forwardedTCPHandler{}
+	}
+	if _, ok := srv.requestHandlers["cancel-tcpip-forward"]; !ok {
+		srv.requestHandlers["cancel-tcpip-forward"] = forwardedTCPHandler{}
+	}
+
+	if srv.channelHandlers == nil {
+		srv.channelHandlers = map[string]ChannelHandler{}
+	}
+
+	if _, ok := srv.channelHandlers["session"]; !ok {
+		srv.channelHandlers["session"] = sessionHandler
+	}
+
+	if _, ok := srv.channelHandlers["direct-tcpip"]; !ok {
+		srv.channelHandlers["direct-tcpip"] = directTcpipHandler
 	}
 }
 
@@ -195,13 +252,6 @@ func (srv *Server) Serve(l net.Listener) error {
 	if srv.ReversePortForwardingRegister == nil {
 		srv.ReversePortForwardingRegister = &DefaultReversePortForwardingRegister{}
 	}
-
-	if srv.channelHandlers == nil {
-		srv.channelHandlers = map[string]channelHandler{
-			"session":      sessionHandler,
-			"direct-tcpip": directTcpipHandler,
-		}
-	}
 	var tempDelay time.Duration
 
 	srv.trackListener(l, true)
@@ -233,8 +283,12 @@ func (srv *Server) Serve(l net.Listener) error {
 }
 
 func (srv *Server) handleConn(newConn net.Conn) {
+	cl := &closeListener{}
 	if srv.ConnCallback != nil {
-		cbConn := srv.ConnCallback(newConn)
+		cbConn := srv.ConnCallback(&struct {
+			net.Conn
+			*closeListener
+		}{newConn, cl})
 		if cbConn == nil {
 			newConn.Close()
 			return
@@ -250,7 +304,12 @@ func (srv *Server) handleConn(newConn net.Conn) {
 	if srv.MaxTimeout > 0 {
 		conn.maxDeadline = time.Now().Add(srv.MaxTimeout)
 	}
-	defer conn.Close()
+
+	ctx.SetValue(ContextKeyCloseListener, cl)
+	defer func() {
+		defer cl.call()
+		conn.Close()
+	}()
 	sshConn, chans, reqs, err := gossh.NewServerConn(conn, srv.config(ctx))
 	if err != nil {
 		// TODO: trigger event callback
