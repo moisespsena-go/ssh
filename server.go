@@ -126,6 +126,12 @@ func (srv *Server) ensureHandlers() {
 	if _, ok := srv.requestHandlers["cancel-tcpip-forward"]; !ok {
 		srv.requestHandlers["cancel-tcpip-forward"] = forwardedTCPHandler{}
 	}
+	if _, ok := srv.requestHandlers["streamlocal-forward@openssh.com"]; !ok {
+		srv.requestHandlers["streamlocal-forward@openssh.com"] = forwardedTCPHandler{}
+	}
+	if _, ok := srv.requestHandlers["cancel-tcpip-forward"]; !ok {
+		srv.requestHandlers["cancel-tcpip-forward"] = forwardedTCPHandler{}
+	}
 
 	if srv.channelHandlers == nil {
 		srv.channelHandlers = map[string]ChannelHandler{}
@@ -137,6 +143,10 @@ func (srv *Server) ensureHandlers() {
 
 	if _, ok := srv.channelHandlers["direct-tcpip"]; !ok {
 		srv.channelHandlers["direct-tcpip"] = directTcpipHandler
+	}
+
+	if _, ok := srv.channelHandlers["direct-streamlocal@openssh.com"]; !ok {
+		srv.channelHandlers["direct-streamlocal@openssh.com"] = directUnixHandler
 	}
 }
 
