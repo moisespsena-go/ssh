@@ -57,16 +57,16 @@ type SessionRequestCallback func(sess Session, requestType string) bool
 type ConnCallback func(conn net.Conn) net.Conn
 
 // LocalPortForwardingCallback is a hook for allowing port forwarding
-type LocalPortForwardingCallback func(ctx Context, destinationHost string, destinationPort uint32) bool
+type LocalPortForwardingCallback func(ctx Context, addr string) bool
 
 // LocalPortForwardingCallback is a hook for allowing port forwarding
-type LocalPortForwardingResolverCallback func(ctx Context, destinationHost string, destinationPort uint32) (addr string, err error)
+type LocalPortForwardingResolverCallback func(ctx Context, addr string) (destAddr string, err error)
 
 // ReversePortForwardingCallback is a hook for allowing reverse port forwarding
-type ReversePortForwardingCallback func(ctx Context, bindHost string, bindPort uint32) bool
+type ReversePortForwardingCallback func(ctx Context, addr string) bool
 
 // ReversePortForwardingListenerCallback is a hook for create port forwarding listener
-type ReversePortForwardingListenerCallback func(ctx Context, bindHost string, bindPort uint32) (net.Listener, error)
+type ReversePortForwardingListenerCallback func(ctx Context, addr string) (net.Listener, error)
 
 // DefaultServerConfigCallback is a hook for creating custom default server configs
 type DefaultServerConfigCallback func(ctx Context) *gossh.ServerConfig
