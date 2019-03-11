@@ -73,7 +73,7 @@ type DefaultServerConfigCallback func(ctx Context) *gossh.ServerConfig
 
 // ReversePortForwardingRegister is a port forwarding register
 type ReversePortForwardingRegister interface {
-	Register(ctx Context, addr string, ln net.Listener)             // Register registry port forwarding listener
+	Register(ctx Context, addr string, ln net.Listener) error       // Register registry port forwarding listener
 	UnRegister(ctx Context, addr string) (ln net.Listener, ok bool) // UnRegister unregister port forwarding listener
 	Get(ctx Context, key string) (ln net.Listener, ok bool)         // Get return port forwarding listener
 }
@@ -83,7 +83,7 @@ type DefaultReversePortForwardingRegister struct {
 	mu       sync.Mutex
 }
 
-func (r *DefaultReversePortForwardingRegister) Register(ctx Context, addr string, ln net.Listener) {
+func (r *DefaultReversePortForwardingRegister) Register(ctx Context, addr string, ln net.Listener) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.forwards == nil {
@@ -95,6 +95,7 @@ func (r *DefaultReversePortForwardingRegister) Register(ctx Context, addr string
 		r.forwards[clientKey] = map[string]net.Listener{}
 	}
 	r.forwards[clientKey][addr] = ln
+	return nil
 }
 
 func (r *DefaultReversePortForwardingRegister) UnRegister(ctx Context, addr string) (ln net.Listener, ok bool) {

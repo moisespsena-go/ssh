@@ -230,7 +230,12 @@ func (h forwardedTCPHandler) handleAddr(conn *gossh.ServerConn, ctx Context, srv
 
 	addr := ln.Addr().String()
 
-	register.Register(ctx, reqAddr, ln)
+	if err = register.Register(ctx, reqAddr, ln); err != nil {
+		log.Println("register listener of `"+reqAddr+"` failed:", err)
+		ln.Close()
+		return false, nil
+	}
+
 	go func() {
 		<-ctx.Done()
 		ln, ok := register.Get(ctx, addr)
