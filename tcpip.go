@@ -4,7 +4,6 @@ import (
 	"io"
 	"log"
 	"net"
-	"os"
 	"strconv"
 	"strings"
 
@@ -25,91 +24,11 @@ type localForwardChannelData struct {
 	OriginPort uint32
 }
 
-func directTcpipHandler(srv *Server, conn *gossh.ServerConn, newChan gossh.NewChannel, ctx Context) {
-	d := localForwardChannelData{}
-	if err := gossh.Unmarshal(newChan.ExtraData(), &d); err != nil {
-		newChan.Reject(gossh.ConnectionFailed, "error parsing forward data: "+err.Error())
-		return
-	}
-
-	addr := net.JoinHostPort(d.DestAddr, strconv.Itoa(int(d.DestPort)))
-
-	if srv.LocalPortForwardingCallback == nil || !srv.LocalPortForwardingCallback(ctx, addr) {
-		newChan.Reject(gossh.Prohibited, "port forwarding is disabled")
-		return
-	}
-
-	var dest string
-
-	if srv.LocalPortForwardingResolverCallback != nil {
-		var err error
-		if dest, err = srv.LocalPortForwardingResolverCallback(ctx, addr); err != nil {
-			newChan.Reject(gossh.ConnectionFailed, "Local forward port resolver failed: "+err.Error())
-			return
-		}
-	} else {
-		dest = net.JoinHostPort(d.DestAddr, strconv.FormatInt(int64(d.DestPort), 10))
-	}
-
-	var dialer net.Dialer
-	dconn, err := dialer.DialContext(ctx, "tcp", dest)
-	if err != nil {
-		newChan.Reject(gossh.ConnectionFailed, err.Error())
-		return
-	}
-
-	ch, reqs, err := newChan.Accept()
-	if err != nil {
-		dconn.Close()
-		return
-	}
-	go gossh.DiscardRequests(reqs)
-
-	go func() {
-		defer ch.Close()
-		defer dconn.Close()
-		io.Copy(ch, dconn)
-	}()
-	go func() {
-		defer ch.Close()
-		defer dconn.Close()
-		io.Copy(dconn, ch)
-	}()
-}
-
-func directUnixHandler(srv *Server, conn *gossh.ServerConn, newChan gossh.NewChannel, ctx Context) {
-	var d struct {
-		SocketPath, Reserved0 string
-		Reserved1             uint32
-	}
-	if err := gossh.Unmarshal(newChan.ExtraData(), &d); err != nil {
-		newChan.Reject(gossh.ConnectionFailed, "error parsing forward data: "+err.Error())
-		return
-	}
-
-	var addr = "unix:" + d.SocketPath
-
-	if srv.LocalPortForwardingCallback == nil || !srv.LocalPortForwardingCallback(ctx, addr) {
-		newChan.Reject(gossh.Prohibited, "port forwarding is disabled")
-		return
-	}
-
+func portOrUnixSocketHandler(newChan gossh.NewChannel, ctx Context, dest string) {
 	var (
-		dest  string
+		err   error
 		dconn net.Conn
 	)
-
-	if srv.LocalPortForwardingResolverCallback != nil {
-		var err error
-		if dest, err = srv.LocalPortForwardingResolverCallback(ctx, addr); err != nil {
-			newChan.Reject(gossh.ConnectionFailed, "Local forward port resolver failed: "+err.Error())
-			return
-		}
-	} else {
-		dest = addr
-	}
-
-	var err error
 
 	if strings.HasPrefix(dest, "unix:") {
 		var dialer net.Dialer
@@ -144,6 +63,35 @@ func directUnixHandler(srv *Server, conn *gossh.ServerConn, newChan gossh.NewCha
 		defer dconn.Close()
 		io.Copy(dconn, ch)
 	}()
+}
+
+func directTcpipHandler(srv *Server, conn *gossh.ServerConn, newChan gossh.NewChannel, ctx Context) {
+	d := localForwardChannelData{}
+	if err := gossh.Unmarshal(newChan.ExtraData(), &d); err != nil {
+		newChan.Reject(gossh.ConnectionFailed, "error parsing forward data: "+err.Error())
+		return
+	}
+
+	addr := net.JoinHostPort(d.DestAddr, strconv.Itoa(int(d.DestPort)))
+
+	if srv.LocalPortForwardingCallback == nil || !srv.LocalPortForwardingCallback(ctx, addr) {
+		newChan.Reject(gossh.Prohibited, "port forwarding is disabled")
+		return
+	}
+
+	var dest string
+
+	if srv.LocalPortForwardingResolverCallback != nil {
+		var err error
+		if dest, err = srv.LocalPortForwardingResolverCallback(ctx, addr); err != nil {
+			newChan.Reject(gossh.ConnectionFailed, "Local forward port resolver failed: "+err.Error())
+			return
+		}
+	} else {
+		dest = net.JoinHostPort(d.DestAddr, strconv.FormatInt(int64(d.DestPort), 10))
+	}
+
+	portOrUnixSocketHandler(newChan, ctx, dest)
 }
 
 type remoteForwardRequest struct {
@@ -202,23 +150,10 @@ func (h forwardedTCPHandler) handleAddr(conn *gossh.ServerConn, ctx Context, srv
 		err error
 		ln  net.Listener
 
-		reqIsUnix = strings.HasPrefix(reqAddr, "unix:")
-		register  = srv.ReversePortForwardingRegister
+		register = srv.ReverseForwardingRegister
 	)
 	if srv.ReversePortForwardingListenerCallback != nil {
 		ln, err = srv.ReversePortForwardingListenerCallback(ctx, reqAddr)
-	} else if reqIsUnix {
-		pth := strings.TrimPrefix(reqAddr, "unix:")
-		if _, err := os.Stat(pth); err != nil {
-			if !os.IsNotExist(err) {
-				log.Println("stat of unix addr", pth, "addr failed:", err)
-				return false, []byte{}
-			}
-		} else if err := os.Remove(pth); err != nil {
-			log.Println("remove unix sockfile", pth, "failed:", err)
-			return false, []byte{}
-		}
-		ln, err = net.Listen("unix", pth)
 	} else {
 		ln, err = net.Listen("tcp", reqAddr)
 	}
@@ -254,23 +189,20 @@ func (h forwardedTCPHandler) handleAddr(conn *gossh.ServerConn, ctx Context, srv
 				payload  []byte
 				chanType string
 			)
-			if reqIsUnix {
-				chanType = forwardedUnixChannelType
-				payload = gossh.Marshal(struct{ a, b string }{a: strings.TrimPrefix(reqAddr, "unix:")})
-			} else {
-				chanType = forwardedTCPChannelType
-				_, destPortStr, _ := net.SplitHostPort(addr)
-				destPort, _ := strconv.Atoi(destPortStr)
-				reqBindAdd, _, _ := net.SplitHostPort(reqAddr)
-				originAddr, orignPortStr, _ := net.SplitHostPort(c.RemoteAddr().String())
-				originPort, _ := strconv.Atoi(orignPortStr)
-				payload = gossh.Marshal(&remoteForwardChannelData{
-					DestAddr:   reqBindAdd,
-					DestPort:   uint32(destPort),
-					OriginAddr: originAddr,
-					OriginPort: uint32(originPort),
-				})
-			}
+
+			chanType = forwardedTCPChannelType
+			_, destPortStr, _ := net.SplitHostPort(addr)
+			destPort, _ := strconv.Atoi(destPortStr)
+			reqBindAdd, _, _ := net.SplitHostPort(reqAddr)
+			originAddr, orignPortStr, _ := net.SplitHostPort(c.RemoteAddr().String())
+			originPort, _ := strconv.Atoi(orignPortStr)
+			payload = gossh.Marshal(&remoteForwardChannelData{
+				DestAddr:   reqBindAdd,
+				DestPort:   uint32(destPort),
+				OriginAddr: originAddr,
+				OriginPort: uint32(originPort),
+			})
+
 			go func() {
 				ch, reqs, err := conn.OpenChannel(chanType, payload)
 				if err != nil {
@@ -295,33 +227,42 @@ func (h forwardedTCPHandler) handleAddr(conn *gossh.ServerConn, ctx Context, srv
 		register.UnRegister(ctx, addr)
 	}()
 
-	var payload []byte
-	if !reqIsUnix {
-		_, destPortStr, _ := net.SplitHostPort(addr)
-		destPort, _ := strconv.Atoi(destPortStr)
-		payload = gossh.Marshal(&remoteForwardSuccess{uint32(destPort)})
-	}
+	_, destPortStr, _ := net.SplitHostPort(addr)
+	destPort, _ := strconv.Atoi(destPortStr)
+	payload := gossh.Marshal(&remoteForwardSuccess{uint32(destPort)})
+
 	return true, payload
 }
 
 func (h forwardedTCPHandler) HandleRequest(ctx Context, srv *Server, req *gossh.Request) (bool, []byte) {
 	conn := ctx.Value(ContextKeyConn).(*gossh.ServerConn)
 	switch req.Type {
-	case "streamlocal-forward@openssh.com":
+	case OpenSSHStreamLocalForward:
 		var (
 			reqPayload remoteUnixForwardRequest
 			err        error
 			addr       string
 		)
 		if err = gossh.Unmarshal(req.Payload, &reqPayload); err != nil {
-			// TODO: log parse failure
 			return false, []byte{}
 		}
 		addr = "unix:" + reqPayload.SocketPath
-		if srv.ReversePortForwardingCallback == nil || !srv.ReversePortForwardingCallback(ctx, addr) {
-			return false, []byte("port forwarding is disabled")
+		if srv.ReverseUnixSocketForwardingCallback == nil || !srv.ReverseUnixSocketForwardingCallback(ctx, addr) {
+			return false, []byte("unix socket forwarding is disabled")
 		}
-		return h.handleAddr(conn, ctx, srv, addr)
+		return h.handleUnixSocket(conn, ctx, srv, reqPayload.SocketPath)
+
+	case OpenSSHCancelStreamLocalForward:
+		var reqPayload remoteUnixForwardRequest
+		if err := gossh.Unmarshal(req.Payload, &reqPayload); err != nil {
+			// TODO: log parse failure
+			return false, []byte{}
+		}
+		if ln, ok := srv.ReverseForwardingRegister.Get(ctx, "unix:"+reqPayload.SocketPath); ok {
+			ln.Close()
+		}
+		return true, nil
+
 	case "tcpip-forward":
 		var (
 			reqPayload remoteForwardRequest
@@ -337,6 +278,7 @@ func (h forwardedTCPHandler) HandleRequest(ctx Context, srv *Server, req *gossh.
 			return false, []byte("port forwarding is disabled")
 		}
 		return h.handleAddr(conn, ctx, srv, addr)
+
 	case "cancel-tcpip-forward":
 		var reqPayload remoteForwardCancelRequest
 		if err := gossh.Unmarshal(req.Payload, &reqPayload); err != nil {
@@ -344,7 +286,7 @@ func (h forwardedTCPHandler) HandleRequest(ctx Context, srv *Server, req *gossh.
 			return false, []byte{}
 		}
 		addr := net.JoinHostPort(reqPayload.BindAddr, strconv.Itoa(int(reqPayload.BindPort)))
-		if ln, ok := srv.ReversePortForwardingRegister.Get(ctx, addr); ok {
+		if ln, ok := srv.ReverseForwardingRegister.Get(ctx, addr); ok {
 			ln.Close()
 		}
 		return true, nil

@@ -24,19 +24,23 @@ type Server struct {
 	HostSigners []Signer // private keys for the host key, must have at least one
 	Version     string   // server version to be sent before the initial handshake
 
-	KeyboardInteractiveHandler            KeyboardInteractiveHandler            // keyboard-interactive authentication handler
-	PasswordHandler                       PasswordHandler                       // password authentication handler
-	PublicKeyHandler                      PublicKeyHandler                      // public key authentication handler
-	PtyCallback                           PtyCallback                           // callback for allowing PTY sessions, allows all if nil
-	ConnCallback                          ConnCallback                          // optional callback for wrapping net.Conn before handling
-	LocalPortForwardingCallback           LocalPortForwardingCallback           // callback for allowing local port forwarding, denies all if nil
-	ReversePortForwardingCallback         ReversePortForwardingCallback         // callback for allowing reverse port forwarding, denies all if nil
-	ReversePortForwardingListenerCallback ReversePortForwardingListenerCallback // callback for allowing reverse port forwarding, denies all if nil
-	DefaultServerConfigCallback           DefaultServerConfigCallback           // callback for configuring detailed SSH options
-	SessionRequestCallback                SessionRequestCallback                // callback for allowing or denying SSH sessions
-	ReversePortForwardingRegister         ReversePortForwardingRegister
-	LocalPortForwardingResolverCallback   LocalPortForwardingResolverCallback
-	ProxyCallback                         ProxyCallback
+	KeyboardInteractiveHandler                  KeyboardInteractiveHandler                  // keyboard-interactive authentication handler
+	PasswordHandler                             PasswordHandler                             // password authentication handler
+	PublicKeyHandler                            PublicKeyHandler                            // public key authentication handler
+	PtyCallback                                 PtyCallback                                 // callback for allowing PTY sessions, allows all if nil
+	ConnCallback                                ConnCallback                                // optional callback for wrapping net.Conn before handling
+	LocalPortForwardingCallback                 LocalPortForwardingCallback                 // callback for allowing local port forwarding, denies all if nil
+	LocalUnixSocketForwardingCallback           LocalUnixSocketForwardingCallback           // callback for allowing unix socket forwarding, denies all if nil
+	ReversePortForwardingCallback               ReversePortForwardingCallback               // callback for allowing reverse port forwarding, denies all if nil
+	ReverseUnixSocketForwardingCallback         ReverseUnixSocketForwardingCallback         // callback for allowing reverse port forwarding, denies all if nil
+	ReversePortForwardingListenerCallback       ReversePortForwardingListenerCallback       // callback for allowing reverse port forwarding, denies all if nil
+	ReverseUnixSocketForwardingListenerCallback ReverseUnixSocketForwardingListenerCallback // callback for allowing reverse port forwarding, denies all if nil
+	DefaultServerConfigCallback                 DefaultServerConfigCallback                 // callback for configuring detailed SSH options
+	SessionRequestCallback                      SessionRequestCallback                      // callback for allowing or denying SSH sessions
+	ReverseForwardingRegister                   ReverseForwardingRegister
+	LocalPortForwardingResolverCallback         LocalPortForwardingResolverCallback
+	LocalUnixSocketForwardingResolverCallback   LocalUnixSocketForwardingResolverCallback
+	ProxyCallback                               ProxyCallback
 
 	IdleTimeout time.Duration // connection timeout when no activity, none if empty
 	MaxTimeout  time.Duration // absolute connection timeout, none if empty
@@ -52,6 +56,7 @@ type Server struct {
 	connWg     sync.WaitGroup
 	doneChan   chan struct{}
 }
+
 type RequestHandler interface {
 	HandleRequest(ctx Context, srv *Server, req *gossh.Request) (ok bool, payload []byte)
 }
@@ -126,8 +131,11 @@ func (srv *Server) ensureHandlers() {
 	if _, ok := srv.requestHandlers["cancel-tcpip-forward"]; !ok {
 		srv.requestHandlers["cancel-tcpip-forward"] = forwardedTCPHandler{}
 	}
-	if _, ok := srv.requestHandlers["streamlocal-forward@openssh.com"]; !ok {
-		srv.requestHandlers["streamlocal-forward@openssh.com"] = forwardedTCPHandler{}
+	if _, ok := srv.requestHandlers[OpenSSHStreamLocalForward]; !ok {
+		srv.requestHandlers[OpenSSHStreamLocalForward] = forwardedTCPHandler{}
+	}
+	if _, ok := srv.requestHandlers[OpenSSHCancelStreamLocalForward]; !ok {
+		srv.requestHandlers[OpenSSHCancelStreamLocalForward] = forwardedTCPHandler{}
 	}
 
 	if srv.channelHandlers == nil {
@@ -256,8 +264,8 @@ func (srv *Server) Serve(l net.Listener) error {
 		srv.Handler = DefaultHandler
 	}
 
-	if srv.ReversePortForwardingRegister == nil {
-		srv.ReversePortForwardingRegister = &DefaultReversePortForwardingRegister{}
+	if srv.ReverseForwardingRegister == nil {
+		srv.ReverseForwardingRegister = &DefaultReverseForwardingRegister{}
 	}
 	var tempDelay time.Duration
 

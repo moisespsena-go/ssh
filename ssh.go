@@ -59,31 +59,43 @@ type ConnCallback func(conn net.Conn) net.Conn
 // LocalPortForwardingCallback is a hook for allowing port forwarding
 type LocalPortForwardingCallback func(ctx Context, addr string) bool
 
-// LocalPortForwardingCallback is a hook for allowing port forwarding
-type LocalPortForwardingResolverCallback func(ctx Context, addr string) (destAddr string, err error)
+// LocalUnixSocketForwardingCallback is a hook for allowing unix socket forwarding
+type LocalUnixSocketForwardingCallback func(ctx Context, pth string) bool
+
+// LocalPortForwardingCallback is a hook for resolve port forwarding addr
+type LocalPortForwardingResolverCallback func(ctx Context, addr string) (destPathOrAddr string, err error)
+
+// UnixPortForwardingResolverCallback is a hook for resolve unix socket path or addr forwarding
+type LocalUnixSocketForwardingResolverCallback func(ctx Context, path string) (destPathOrAddr string, err error)
 
 // ReversePortForwardingCallback is a hook for allowing reverse port forwarding
 type ReversePortForwardingCallback func(ctx Context, addr string) bool
 
+// ReverseUnixSocketForwardingCallback is a hook for allowing reverse unix socket forwarding
+type ReverseUnixSocketForwardingCallback func(ctx Context, path string) bool
+
 // ReversePortForwardingListenerCallback is a hook for create port forwarding listener
 type ReversePortForwardingListenerCallback func(ctx Context, addr string) (net.Listener, error)
+
+// ReverseUnixSocketForwardingListenerCallback is a hook for create unix socket forwarding listener
+type ReverseUnixSocketForwardingListenerCallback func(ctx Context, path string) (net.Listener, error)
 
 // DefaultServerConfigCallback is a hook for creating custom default server configs
 type DefaultServerConfigCallback func(ctx Context) *gossh.ServerConfig
 
-// ReversePortForwardingRegister is a port forwarding register
-type ReversePortForwardingRegister interface {
+// ReverseForwardingRegister is a port forwarding register
+type ReverseForwardingRegister interface {
 	Register(ctx Context, addr string, ln net.Listener) error       // Register registry port forwarding listener
 	UnRegister(ctx Context, addr string) (ln net.Listener, ok bool) // UnRegister unregister port forwarding listener
 	Get(ctx Context, key string) (ln net.Listener, ok bool)         // Get return port forwarding listener
 }
 
-type DefaultReversePortForwardingRegister struct {
+type DefaultReverseForwardingRegister struct {
 	forwards map[string]map[string]net.Listener
 	mu       sync.Mutex
 }
 
-func (r *DefaultReversePortForwardingRegister) Register(ctx Context, addr string, ln net.Listener) error {
+func (r *DefaultReverseForwardingRegister) Register(ctx Context, addr string, ln net.Listener) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.forwards == nil {
@@ -98,7 +110,7 @@ func (r *DefaultReversePortForwardingRegister) Register(ctx Context, addr string
 	return nil
 }
 
-func (r *DefaultReversePortForwardingRegister) UnRegister(ctx Context, addr string) (ln net.Listener, ok bool) {
+func (r *DefaultReverseForwardingRegister) UnRegister(ctx Context, addr string) (ln net.Listener, ok bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -116,7 +128,7 @@ func (r *DefaultReversePortForwardingRegister) UnRegister(ctx Context, addr stri
 	return
 }
 
-func (r *DefaultReversePortForwardingRegister) Get(ctx Context, addr string) (ln net.Listener, ok bool) {
+func (r *DefaultReverseForwardingRegister) Get(ctx Context, addr string) (ln net.Listener, ok bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
