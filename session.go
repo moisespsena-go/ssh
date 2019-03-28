@@ -23,6 +23,9 @@ import (
 type Session interface {
 	gossh.Channel
 
+	// Request returns the current request.
+	Request() *gossh.Request
+
 	// User returns the username used when establishing the SSH connection.
 	User() string
 
@@ -98,6 +101,7 @@ func sessionHandler(srv *Server, conn *gossh.ServerConn, newChan gossh.NewChanne
 type session struct {
 	sync.Mutex
 	gossh.Channel
+	req             *gossh.Request
 	conn            *gossh.ServerConn
 	handler         Handler
 	handled         bool
@@ -111,7 +115,11 @@ type session struct {
 	ctx             Context
 	sigCh           chan<- Signal
 	sigBuf          []Signal
-	reqTypeHandlers map[string]func(s Session, req *gossh.Request)
+	reqTypeHandlers map[string]func(s Session)
+}
+
+func (sess *session) Request() *gossh.Request {
+	return sess.req
 }
 
 func (sess *session) Write(p []byte) (n int, err error) {
@@ -207,9 +215,11 @@ func (sess *session) Signals(c chan<- Signal) {
 
 func (sess *session) handleRequests(reqs <-chan *gossh.Request) {
 	for req := range reqs {
+		sess.req = req
+
 		if sess.reqTypeHandlers != nil {
 			if h, ok := sess.reqTypeHandlers[req.Type]; ok {
-				h(sess, req)
+				h(sess)
 				continue
 			}
 		}
@@ -238,7 +248,7 @@ func (sess *session) handleRequests(reqs <-chan *gossh.Request) {
 			req.Reply(true, nil)
 
 			go func() {
-				sess.handler(sess, req)
+				sess.handler(sess)
 				sess.Exit(0)
 			}()
 		case "env":

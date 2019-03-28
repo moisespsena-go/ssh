@@ -45,7 +45,7 @@ type Server struct {
 
 	channelHandlers        map[string]ChannelHandler
 	requestHandlers        map[string]RequestHandler
-	SessionRequestHandlers map[string]func(s Session, req *gossh.Request)
+	SessionRequestHandlers map[string]func(s Session)
 
 	listenerWg sync.WaitGroup
 	mu         sync.Mutex
