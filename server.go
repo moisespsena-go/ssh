@@ -24,23 +24,21 @@ type Server struct {
 	HostSigners []Signer // private keys for the host key, must have at least one
 	Version     string   // server version to be sent before the initial handshake
 
-	KeyboardInteractiveHandler                  KeyboardInteractiveHandler                  // keyboard-interactive authentication handler
-	PasswordHandler                             PasswordHandler                             // password authentication handler
-	PublicKeyHandler                            PublicKeyHandler                            // public key authentication handler
-	PtyCallback                                 PtyCallback                                 // callback for allowing PTY sessions, allows all if nil
-	ConnCallback                                ConnCallback                                // optional callback for wrapping net.Conn before handling
-	LocalPortForwardingCallback                 LocalPortForwardingCallback                 // callback for allowing local port forwarding, denies all if nil
-	LocalUnixSocketForwardingCallback           LocalUnixSocketForwardingCallback           // callback for allowing unix socket forwarding, denies all if nil
-	ReversePortForwardingCallback               ReversePortForwardingCallback               // callback for allowing reverse port forwarding, denies all if nil
-	ReverseUnixSocketForwardingCallback         ReverseUnixSocketForwardingCallback         // callback for allowing reverse port forwarding, denies all if nil
-	ReversePortForwardingListenerCallback       ReversePortForwardingListenerCallback       // callback for allowing reverse port forwarding, denies all if nil
-	ReverseUnixSocketForwardingListenerCallback ReverseUnixSocketForwardingListenerCallback // callback for allowing reverse port forwarding, denies all if nil
-	DefaultServerConfigCallback                 DefaultServerConfigCallback                 // callback for configuring detailed SSH options
-	SessionRequestCallback                      SessionRequestCallback                      // callback for allowing or denying SSH sessions
-	ReverseForwardingRegister                   ReverseForwardingRegister
-	LocalPortForwardingResolverCallback         LocalPortForwardingResolverCallback
-	LocalUnixSocketForwardingResolverCallback   LocalUnixSocketForwardingResolverCallback
-	ProxyCallback                               ProxyCallback
+	KeyboardInteractiveHandler              KeyboardInteractiveHandler // keyboard-interactive authentication handler
+	PasswordHandler                         PasswordHandler            // password authentication handler
+	PublicKeyHandler                        PublicKeyHandler           // public key authentication handler
+	PtyCallback                             PtyCallback                // callback for allowing PTY sessions, allows all if nil
+	ConnCallback                            ConnCallback               // optional callback for wrapping net.Conn before handling
+	SocketForwardingCallback                SocketForwardingCallback   // callback for allowing unix socket forwarding, denies all if nil
+	SocketForwardingResolverCallback        SocketForwardingResolverCallback
+	ReverseSocketForwardingCallback         ReverseSocketForwardingCallback         // callback for allowing reverse port forwarding, denies all if nil
+	ReverseSocketForwardingListenerCallback ReverseSocketForwardingListenerCallback // callback for allowing reverse port forwarding, denies all if nil
+	DefaultServerConfigCallback             DefaultServerConfigCallback             // callback for configuring detailed SSH options
+	SessionRequestCallback                  SessionRequestCallback                  // callback for allowing or denying SSH sessions
+	ReverseForwardingRegister               ReverseForwardingRegister
+	ProxyCallback                           ProxyCallback
+
+	Dialer Dialer // Dialer
 
 	IdleTimeout time.Duration // connection timeout when no activity, none if empty
 	MaxTimeout  time.Duration // absolute connection timeout, none if empty
@@ -125,17 +123,17 @@ func (srv *Server) ensureHandlers() {
 	if srv.requestHandlers == nil {
 		srv.requestHandlers = map[string]RequestHandler{}
 	}
-	if _, ok := srv.requestHandlers["tcpip-forward"]; !ok {
-		srv.requestHandlers["tcpip-forward"] = forwardedTCPHandler{}
+	if _, ok := srv.requestHandlers[ForwardTCPIPRequestType]; !ok {
+		srv.requestHandlers[ForwardTCPIPRequestType] = forwardedHandler{}
 	}
-	if _, ok := srv.requestHandlers["cancel-tcpip-forward"]; !ok {
-		srv.requestHandlers["cancel-tcpip-forward"] = forwardedTCPHandler{}
+	if _, ok := srv.requestHandlers[CancelForwardTCPIPRequestType]; !ok {
+		srv.requestHandlers[CancelForwardTCPIPRequestType] = forwardedHandler{}
 	}
 	if _, ok := srv.requestHandlers[OpenSSHStreamLocalForward]; !ok {
-		srv.requestHandlers[OpenSSHStreamLocalForward] = forwardedTCPHandler{}
+		srv.requestHandlers[OpenSSHStreamLocalForward] = forwardedHandler{}
 	}
 	if _, ok := srv.requestHandlers[OpenSSHCancelStreamLocalForward]; !ok {
-		srv.requestHandlers[OpenSSHCancelStreamLocalForward] = forwardedTCPHandler{}
+		srv.requestHandlers[OpenSSHCancelStreamLocalForward] = forwardedHandler{}
 	}
 
 	if srv.channelHandlers == nil {
@@ -146,8 +144,8 @@ func (srv *Server) ensureHandlers() {
 		srv.channelHandlers["session"] = sessionHandler
 	}
 
-	if _, ok := srv.channelHandlers["direct-tcpip"]; !ok {
-		srv.channelHandlers["direct-tcpip"] = directTcpipHandler
+	if _, ok := srv.channelHandlers[DirectTCPIPChannelType]; !ok {
+		srv.channelHandlers[DirectTCPIPChannelType] = directTcpipHandler
 	}
 
 	if _, ok := srv.channelHandlers["direct-streamlocal@openssh.com"]; !ok {
@@ -260,8 +258,13 @@ func (srv *Server) Serve(l net.Listener) error {
 	if err := srv.ensureHostSigner(); err != nil {
 		return err
 	}
+
 	if srv.Handler == nil {
 		srv.Handler = DefaultHandler
+	}
+
+	if srv.Dialer == nil {
+		srv.Dialer = &DefaultDialer{}
 	}
 
 	if srv.ReverseForwardingRegister == nil {

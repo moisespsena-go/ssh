@@ -3,9 +3,9 @@ package main
 import (
 	"io"
 	"log"
+	"net"
 
 	"github.com/gliderlabs/ssh"
-	gossh "golang.org/x/crypto/ssh"
 )
 
 func main() {
@@ -13,16 +13,18 @@ func main() {
 	log.Println("starting ssh server on port 2222...")
 
 	server := ssh.Server{
-		LocalPortForwardingCallback: ssh.LocalPortForwardingCallback(func(ctx ssh.Context, dhost string, dport uint32) bool {
+		SocketForwardingCallback: ssh.SocketForwardingCallback(func(ctx ssh.Context, addr string) bool {
+			dhost, dport, _ := net.SplitHostPort(addr)
 			log.Println("Accepted forward", dhost, dport)
 			return true
 		}),
 		Addr: ":2222",
-		Handler: ssh.Handler(func(s ssh.Session, _ *gossh.Request) {
+		Handler: ssh.Handler(func(s ssh.Session) {
 			io.WriteString(s, "Remote forwarding available...\n")
 			select {}
 		}),
-		ReversePortForwardingCallback: ssh.ReversePortForwardingCallback(func(ctx ssh.Context, host string, port uint32) bool {
+		ReverseSocketForwardingCallback: ssh.ReverseSocketForwardingCallback(func(ctx ssh.Context, addr string) bool {
+			host, port, _ := net.SplitHostPort(addr)
 			log.Println("attempt to bind", host, port, "granted")
 			return true
 		}),

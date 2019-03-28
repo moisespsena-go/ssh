@@ -11,11 +11,45 @@ import (
 )
 
 const (
-	OpenSSHStreamLocalForward       = "streamlocal-forward@openssh.com"
-	OpenSSHCancelStreamLocalForward = "cancel-" + OpenSSHStreamLocalForward
+	ForwardVirtualRequestType       = "virtual-forward"
+	CancelForwardVirtualRequestType = "cancel-virtual-forward"
+	ForwardedVirtualChannelType     = "forwarded-virtual"
 )
 
-func directUnixHandler(srv *Server, conn *gossh.ServerConn, newChan gossh.NewChannel, ctx Context) {
+type RemoteVirtualForwardRequest struct {
+	Name string
+}
+
+func (h forwardedHandler) streamVirtual(ctx Context, srv *Server, req *gossh.Request, conn *gossh.ServerConn) (bool, []byte) {
+	var (
+		reqPayload RemoteVirtualForwardRequest
+		err        error
+		addr       string
+	)
+	if err = gossh.Unmarshal(req.Payload, &reqPayload); err != nil {
+		return false, []byte{}
+	}
+
+	addr = "virtual:" + reqPayload.Name
+	if srv.ReverseSocketForwardingCallback == nil || !srv.ReverseSocketForwardingCallback(ctx, addr) {
+		return false, []byte("virtual socket forwarding is disabled")
+	}
+	return h.handleVirtualSocket(conn, ctx, srv, reqPayload.Name)
+}
+
+func (h forwardedHandler) cancelVirtual(ctx Context, srv *Server, req *gossh.Request, conn *gossh.ServerConn) (bool, []byte) {
+	var reqPayload RemoteVirtualForwardRequest
+	if err := gossh.Unmarshal(req.Payload, &reqPayload); err != nil {
+		// TODO: log parse failure
+		return false, []byte{}
+	}
+	if ln, ok := srv.ReverseForwardingRegister.Get(ctx, "virtual:"+reqPayload.Name); ok {
+		ln.Close()
+	}
+	return true, nil
+}
+
+func directVirtualHandler(srv *Server, _ *gossh.ServerConn, newChan gossh.NewChannel, ctx Context) {
 	var d struct {
 		SocketPath, Reserved0 string
 		Reserved1             uint32
@@ -27,7 +61,7 @@ func directUnixHandler(srv *Server, conn *gossh.ServerConn, newChan gossh.NewCha
 
 	var addr = d.SocketPath
 
-	if srv.LocalUnixSocketForwardingCallback == nil || !srv.LocalUnixSocketForwardingCallback(ctx, addr) {
+	if srv.SocketForwardingCallback == nil || !srv.SocketForwardingCallback(ctx, addr) {
 		newChan.Reject(gossh.Prohibited, "unix socket forwarding is disabled")
 		return
 	}
@@ -36,9 +70,9 @@ func directUnixHandler(srv *Server, conn *gossh.ServerConn, newChan gossh.NewCha
 		dest string
 	)
 
-	if srv.LocalUnixSocketForwardingResolverCallback != nil {
+	if srv.SocketForwardingResolverCallback != nil {
 		var err error
-		if dest, err = srv.LocalUnixSocketForwardingResolverCallback(ctx, addr); err != nil {
+		if dest, err = srv.SocketForwardingResolverCallback(ctx, addr); err != nil {
 			newChan.Reject(gossh.ConnectionFailed, "Local forward unix socket resolver failed: "+err.Error())
 			return
 		}
@@ -46,18 +80,18 @@ func directUnixHandler(srv *Server, conn *gossh.ServerConn, newChan gossh.NewCha
 		dest = "unix:" + addr
 	}
 
-	portOrUnixSocketHandler(newChan, ctx, dest)
+	socketHandler(srv.Dialer, newChan, ctx, dest)
 }
 
-func (h forwardedTCPHandler) handleUnixSocket(conn *gossh.ServerConn, ctx Context, srv *Server, pth string) (bool, []byte) {
+func (h forwardedHandler) handleVirtualSocket(conn *gossh.ServerConn, ctx Context, srv *Server, name string) (bool, []byte) {
 	var (
 		err error
 		ln  net.Listener
 
 		register = srv.ReverseForwardingRegister
 	)
-	if srv.ReverseUnixSocketForwardingListenerCallback != nil {
-		ln, err = srv.ReverseUnixSocketForwardingListenerCallback(ctx, pth)
+	if srv.ReverseSocketForwardingListenerCallback != nil {
+		ln, err = srv.ReverseSocketForwardingListenerCallback(ctx, pth)
 	} else {
 		if _, err := os.Stat(pth); err != nil {
 			if !os.IsNotExist(err) {
@@ -103,7 +137,7 @@ func (h forwardedTCPHandler) handleUnixSocket(conn *gossh.ServerConn, ctx Contex
 				payload  []byte
 				chanType string
 			)
-			chanType = forwardedUnixChannelType
+			chanType = ForwardedUnixChannelType
 			payload = gossh.Marshal(struct{ a, b string }{a: strings.TrimPrefix(reqAddr, "unix:")})
 
 			go func() {

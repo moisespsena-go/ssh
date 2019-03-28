@@ -1,8 +1,10 @@
 package ssh
 
 import (
+	"context"
 	"crypto/subtle"
 	"net"
+	"strings"
 	"sync"
 
 	gossh "golang.org/x/crypto/ssh"
@@ -34,7 +36,7 @@ var DefaultHandler Handler
 type Option func(*Server) error
 
 // Handler is a callback for handling established SSH sessions.
-type Handler func(Session, *gossh.Request)
+type Handler func(Session)
 
 // PublicKeyHandler is a callback for performing public key authentication.
 type PublicKeyHandler func(ctx Context, key PublicKey) bool
@@ -56,32 +58,36 @@ type SessionRequestCallback func(sess Session, requestType string) bool
 // the net.Conn that will be used as the underlying connection.
 type ConnCallback func(conn net.Conn) net.Conn
 
-// LocalPortForwardingCallback is a hook for allowing port forwarding
-type LocalPortForwardingCallback func(ctx Context, addr string) bool
+// SocketForwardingCallback is a hook for allowing socket forwarding
+type SocketForwardingCallback func(ctx Context, addr string) bool
 
-// LocalUnixSocketForwardingCallback is a hook for allowing unix socket forwarding
-type LocalUnixSocketForwardingCallback func(ctx Context, pth string) bool
+// UnixPortForwardingResolverCallback is a hook for resolve socket addr forwarding
+type SocketForwardingResolverCallback func(ctx Context, addr string) (destAddr string, err error)
 
-// LocalPortForwardingCallback is a hook for resolve port forwarding addr
-type LocalPortForwardingResolverCallback func(ctx Context, addr string) (destPathOrAddr string, err error)
+// ReverseSocketForwardingCallback is a hook for allowing reverse socket forwarding
+type ReverseSocketForwardingCallback func(ctx Context, addr string) bool
 
-// UnixPortForwardingResolverCallback is a hook for resolve unix socket path or addr forwarding
-type LocalUnixSocketForwardingResolverCallback func(ctx Context, path string) (destPathOrAddr string, err error)
-
-// ReversePortForwardingCallback is a hook for allowing reverse port forwarding
-type ReversePortForwardingCallback func(ctx Context, addr string) bool
-
-// ReverseUnixSocketForwardingCallback is a hook for allowing reverse unix socket forwarding
-type ReverseUnixSocketForwardingCallback func(ctx Context, path string) bool
-
-// ReversePortForwardingListenerCallback is a hook for create port forwarding listener
-type ReversePortForwardingListenerCallback func(ctx Context, addr string) (net.Listener, error)
-
-// ReverseUnixSocketForwardingListenerCallback is a hook for create unix socket forwarding listener
-type ReverseUnixSocketForwardingListenerCallback func(ctx Context, path string) (net.Listener, error)
+// ReverseSocketForwardingListenerCallback is a hook for create socket forwarding listener
+type ReverseSocketForwardingListenerCallback func(ctx Context, addr string) (net.Listener, error)
 
 // DefaultServerConfigCallback is a hook for creating custom default server configs
 type DefaultServerConfigCallback func(ctx Context) *gossh.ServerConfig
+
+// Dialer is a net dialer
+type Dialer interface {
+	Dial(addr string, ctx context.Context) (con net.Conn, err error)
+}
+
+type DefaultDialer struct {
+	netDialer net.Dialer
+}
+
+func (d DefaultDialer) Dial(addr string, ctx context.Context) (con net.Conn, err error) {
+	if strings.HasPrefix(addr, "unix:") {
+		return d.netDialer.DialContext(ctx, "unix", strings.TrimPrefix(addr, "unix:"))
+	}
+	return d.netDialer.DialContext(ctx, "tcp", addr)
+}
 
 // ReverseForwardingRegister is a port forwarding register
 type ReverseForwardingRegister interface {
