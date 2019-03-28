@@ -4,7 +4,6 @@ import (
 	"io"
 	"log"
 	"net"
-	"os"
 	"strings"
 
 	gossh "golang.org/x/crypto/ssh"
@@ -90,20 +89,7 @@ func (h forwardedHandler) handleVirtualSocket(conn *gossh.ServerConn, ctx Contex
 
 		register = srv.ReverseForwardingRegister
 	)
-	if srv.ReverseSocketForwardingListenerCallback != nil {
-		ln, err = srv.ReverseSocketForwardingListenerCallback(ctx, pth)
-	} else {
-		if _, err := os.Stat(pth); err != nil {
-			if !os.IsNotExist(err) {
-				log.Println("stat of unix addr", pth, "addr failed:", err)
-				return false, []byte{}
-			}
-		} else if err := os.Remove(pth); err != nil {
-			log.Println("remove unix sockfile", pth, "failed:", err)
-			return false, []byte{}
-		}
-		ln, err = net.Listen("unix", pth)
-	}
+	ln, err = srv.ReverseSocketForwardingListenerCallback(ctx, name)
 
 	if err != nil {
 		log.Println("listen failed:", err)
@@ -111,7 +97,7 @@ func (h forwardedHandler) handleVirtualSocket(conn *gossh.ServerConn, ctx Contex
 	}
 
 	addr := ln.Addr().String()
-	reqAddr := "unix:" + pth
+	reqAddr := "virtual:" + name
 
 	if err = register.Register(ctx, reqAddr, ln); err != nil {
 		log.Println("register listener of `"+reqAddr+"` failed:", err)
