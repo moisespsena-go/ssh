@@ -29,14 +29,19 @@ func (h forwardedHandler) streamUnix(ctx Context, srv *Server, req *gossh.Reques
 	if err = gossh.Unmarshal(req.Payload, &reqPayload); err != nil {
 		return false, []byte{}
 	}
-	virtual = strings.HasPrefix(addr, "virtual:")
 
-	if addr = reqPayload.SocketPath; !virtual {
+	addr = reqPayload.SocketPath
+
+	if virtual = strings.HasPrefix(addr, "virtual:"); !virtual {
 		addr = "unix:" + addr
 	}
 
 	if srv.ReverseSocketForwardingCallback == nil || !srv.ReverseSocketForwardingCallback(ctx, addr) {
-		return false, []byte("unix socket forwarding is disabled")
+		if virtual {
+			return false, []byte("virtual socket forwarding is disabled")
+		} else {
+			return false, []byte("unix socket forwarding is disabled")
+		}
 	}
 
 	if virtual {
@@ -108,7 +113,7 @@ func (h forwardedHandler) handleUnixSocket(conn *gossh.ServerConn, ctx Context, 
 		register = srv.ReverseForwardingRegister
 	)
 	if srv.ReverseSocketForwardingListenerCallback != nil {
-		ln, err = srv.ReverseSocketForwardingListenerCallback(ctx, pth)
+		ln, err = srv.ReverseSocketForwardingListenerCallback(ctx, "unix:"+pth)
 	} else {
 		if _, err := os.Stat(pth); err != nil {
 			if !os.IsNotExist(err) {
