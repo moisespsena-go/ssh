@@ -91,6 +91,9 @@ type Context interface {
 	// Permissions returns the Permissions object used for this connection.
 	Permissions() *Permissions
 
+	// Con returns the gossh.Conn object .
+	Con() gossh.Conn
+
 	// SetValue allows you to easily write new values into the underlying context.
 	SetValue(key, value interface{})
 }
@@ -153,4 +156,8 @@ func (ctx *sshContext) LocalAddr() net.Addr {
 
 func (ctx *sshContext) Permissions() *Permissions {
 	return ctx.Value(ContextKeyPermissions).(*Permissions)
+}
+
+func (ctx *sshContext) Con() gossh.Conn {
+	return ctx.Value(ContextKeyConn).(gossh.Conn)
 }
